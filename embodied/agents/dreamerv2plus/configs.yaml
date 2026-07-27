@@ -371,3 +371,72 @@ debug:
   .*\.units: 64
   .*\.wd: 0.0
   tf: {platform: gpu, jit: False}
+
+nexarm_state:
+
+  task: nexarm_state
+  run: train
+
+  encoder:
+    mlp_keys: 'vector'
+    cnn_keys: '$^'
+    mlp_layers: 2
+    mlp_units: 128
+
+  decoder:
+    mlp_keys: 'vector'
+    cnn_keys: '$^'
+    mlp_layers: 2
+    mlp_units: 128
+
+  rssm:
+    deter: 128
+    units: 128
+    stoch: 16
+    classes: 16
+
+  reward_head:
+    layers: 2
+    units: 128
+
+  cont_head:
+    layers: 2
+    units: 128
+
+  actor:
+    layers: 2
+    units: 128
+
+  critic:
+    layers: 2
+    units: 128
+
+  batch_size: 8
+  replay_chunk: 16
+  replay_size: 200000
+
+  env:
+    amount: 1
+    parallel: none
+    repeat: 1
+    size: [64, 64]
+    length: 100
+    restart: False
+    resets: True
+
+  train:
+    steps: 2000
+    train_fill: 100
+    train_every: 4
+    train_steps: 1
+    log_every: 50
+    sync_every: 100
+    log_keys_video: [vector]
+
+  tf:
+    platform: gpu
+    precision: float32
+    jit: False
+
+  discount: 0.995
+  imag_horizon: 10

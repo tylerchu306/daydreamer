@@ -164,9 +164,14 @@ class TensorBoardOutput(AsyncOutput):
       if len(value.shape) == 0:
         tf.summary.scalar(name, value, step)
       elif len(value.shape) == 2:
-        tf.summary.image(name, value, step)
+        # TensorFlow 2.16 requires image summaries to have rank 4.
+        # Interpret a rank-2 array as one grayscale image.
+        tf.summary.image(
+            name, value[None, ..., None], step)
       elif len(value.shape) == 3:
-        tf.summary.image(name, value, step)
+        # Interpret a rank-3 HWC array as a batch of one image.
+        tf.summary.image(
+            name, value[None, ...], step)
       elif len(value.shape) == 4:
         self._video_summary(name, value, step)
     self._writer.flush()

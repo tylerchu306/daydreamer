@@ -68,6 +68,16 @@ def load_single_env(
     from .sphero import SpheroEnv, EnvConfig
     assert task in ('real', 'dummy')
     env = SpheroEnv(EnvConfig(use_real=task == 'real'))
+  elif suite == 'nexarm':
+    from .nexarm import NexArm
+    assert task in ('state', 'vision'), task
+    env = NexArm(
+        mode=task,
+        size=size,
+        seed=seed,
+        max_episode_steps=length or 300,
+        randomize_object=True,
+    )
   elif suite == 'dmc':
     env = DMC(task, repeat, size, camera)
   elif suite == 'atari':
