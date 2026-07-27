@@ -426,6 +426,7 @@ nexarm_state:
 
   train:
     steps: 2000
+    eval_every: 100
     train_fill: 100
     train_every: 4
     train_steps: 1
