@@ -59,6 +59,10 @@ class NexArm(embodied.Env):
         self._joint_delta = 0.04
         self._gripper_threshold = 0.25
 
+        self._previous_distance: float | None = None
+        self._previous_object_z: float | None = None
+        self._previous_grasped = False
+
         self._env = NexArmEnv(
             scene_path=scene_path,
             image_height=self._size[0],
@@ -119,6 +123,16 @@ class NexArm(embodied.Env):
             self._done = False
             self._last_info = info
 
+            self._previous_distance = float(
+                info["object_to_grasp_distance"]
+            )
+            self._previous_object_z = float(
+                info["object_z"]
+            )
+            self._previous_grasped = bool(
+                getattr(self._env, "_grasped", False)
+            )
+
             return self._convert(
                 raw=raw,
                 info=info,
@@ -164,6 +178,12 @@ class NexArm(embodied.Env):
             target.astype(np.float32)
         )
 
+        reward = self._shape_reward(
+            base_reward=float(reward),
+            info=info,
+            terminated=bool(terminated),
+        )
+
         self._done = bool(terminated or truncated)
         self._last_info = info
 
@@ -175,6 +195,80 @@ class NexArm(embodied.Env):
             is_last=self._done,
             is_terminal=bool(terminated),
         )
+
+
+    def _shape_reward(
+        self,
+        base_reward: float,
+        info: dict[str, Any],
+        terminated: bool,
+    ) -> np.float32:
+        current_distance = float(
+            info["object_to_grasp_distance"]
+        )
+        current_object_z = float(info["object_z"])
+        grasped = bool(
+            getattr(self._env, "_grasped", False)
+        )
+
+        if self._previous_distance is None:
+            reach_progress = 0.0
+        else:
+            reach_progress = float(
+                np.clip(
+                    self._previous_distance
+                    - current_distance,
+                    -0.02,
+                    0.02,
+                )
+            )
+
+        if self._previous_object_z is None or not grasped:
+            lift_progress = 0.0
+        else:
+            lift_progress = float(
+                np.clip(
+                    current_object_z
+                    - self._previous_object_z,
+                    -0.02,
+                    0.02,
+                )
+            )
+
+        newly_grasped = (
+            grasped and not self._previous_grasped
+        )
+        dropped = (
+            self._previous_grasped and not grasped
+        )
+        success = bool(info.get("success", False))
+        failure = bool(terminated and not success)
+
+        # Base environment gives +1 on success. Add another +9
+        # so that total success reward becomes approximately +10.
+        shaped_reward = (
+            base_reward
+            + 2.0 * reach_progress
+            + 20.0 * lift_progress
+            + 1.0 * float(newly_grasped)
+            + 9.0 * float(success)
+            - 1.0 * float(dropped)
+            - 2.0 * float(failure)
+        )
+
+        info["reward_reach"] = 2.0 * reach_progress
+        info["reward_lift"] = 20.0 * lift_progress
+        info["reward_grasp"] = float(newly_grasped)
+        info["reward_success"] = 10.0 * float(success)
+        info["reward_drop"] = -1.0 * float(dropped)
+        info["reward_failure"] = -2.0 * float(failure)
+        info["reward_total"] = shaped_reward
+
+        self._previous_distance = current_distance
+        self._previous_object_z = current_object_z
+        self._previous_grasped = grasped
+
+        return np.float32(shaped_reward)
 
     def _convert(
         self,
