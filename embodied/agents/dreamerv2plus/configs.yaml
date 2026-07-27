@@ -406,6 +406,16 @@ nexarm_state:
   actor:
     layers: 2
     units: 128
+    maxstd: 0.3
+
+  # Bound exploration samples to the environment action range. The default
+  # normal distribution can emit values far outside [-1, 1]; the environment
+  # then clips them while replay stores the unclipped values, which makes the
+  # learned action dynamics inconsistent.
+  actor_dist_cont: trunc_normal
+  actent:
+    scale: 1e-3
+    target: 0.2
 
   critic:
     layers: 2
@@ -425,7 +435,7 @@ nexarm_state:
     resets: True
 
   train:
-    steps: 2000
+    steps: 5000
     eval_every: 100
     train_fill: 100
     train_every: 4
@@ -440,4 +450,4 @@ nexarm_state:
     jit: False
 
   discount: 0.995
-  imag_horizon: 10
+  imag_horizon: 20

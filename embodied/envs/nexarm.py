@@ -56,8 +56,20 @@ class NexArm(embodied.Env):
         self._done = True
         self._last_info: dict[str, Any] = {}
 
-        self._joint_delta = 0.04
+        # Keep policy commands deliberately conservative. The continuous actor
+        # can otherwise move several joints close to their limits on its first
+        # few untrained actions and turn completely away from the object.
+        self._joint_delta = 0.015
         self._gripper_threshold = 0.25
+        self._gripper_close_distance = 0.06
+
+        # Dense task shaping. The absolute closeness term gives short imagined
+        # rollouts a useful signal before the sparse grasp and success events.
+        self._closeness_scale = 0.1
+        self._closeness_temperature = 10.0
+        self._closeness_reference_distance = 0.25
+        self._action_penalty_scale = 0.002
+        self._unsafe_close_penalty = 0.05
 
         self._previous_distance: float | None = None
         self._previous_object_z: float | None = None
@@ -167,10 +179,26 @@ class NexArm(embodied.Env):
         high = self._env.action_space.high
         target[:5] = np.clip(target[:5], low[:5], high[:5])
 
-        # Last action component controls the gripper:
-        # negative = close, positive = open, near zero = keep current command.
+        # Last action component controls the gripper. Reject premature close
+        # commands until the grasp site is inside the environment's snap range.
+        # Besides being safer, this prevents the policy from learning the common
+        # failure mode of closing immediately at the start of every episode.
+        current_distance = float(
+            self._last_info.get(
+                "object_to_grasp_distance",
+                np.inf,
+            )
+        )
+        grasped = bool(getattr(self._env, "_grasped", False))
+        close_requested = normalized[5] < -self._gripper_threshold
+        unsafe_close = bool(
+            close_requested
+            and not grasped
+            and current_distance > self._gripper_close_distance
+        )
+
         if normalized[5] < -self._gripper_threshold:
-            target[5] = low[5]
+            target[5] = high[5] if unsafe_close else low[5]
         elif normalized[5] > self._gripper_threshold:
             target[5] = high[5]
 
@@ -182,6 +210,8 @@ class NexArm(embodied.Env):
             base_reward=float(reward),
             info=info,
             terminated=bool(terminated),
+            normalized_action=normalized,
+            unsafe_close=unsafe_close,
         )
 
         self._done = bool(terminated or truncated)
@@ -202,6 +232,8 @@ class NexArm(embodied.Env):
         base_reward: float,
         info: dict[str, Any],
         terminated: bool,
+        normalized_action: np.ndarray,
+        unsafe_close: bool,
     ) -> np.float32:
         current_distance = float(
             info["object_to_grasp_distance"]
@@ -244,24 +276,49 @@ class NexArm(embodied.Env):
         success = bool(info.get("success", False))
         failure = bool(terminated and not success)
 
+        closeness_reward = self._closeness_scale * (
+            np.exp(
+                -self._closeness_temperature
+                * current_distance
+            )
+            - np.exp(
+                -self._closeness_temperature
+                * self._closeness_reference_distance
+            )
+        )
+        action_penalty = -self._action_penalty_scale * float(
+            np.mean(np.square(normalized_action[:5]))
+        )
+        unsafe_close_penalty = (
+            -self._unsafe_close_penalty
+            * float(unsafe_close)
+        )
+
         # Base environment gives +1 on success. Add another +9
         # so that total success reward becomes approximately +10.
         shaped_reward = (
             base_reward
             + 2.0 * reach_progress
+            + closeness_reward
             + 20.0 * lift_progress
             + 1.0 * float(newly_grasped)
             + 9.0 * float(success)
             - 1.0 * float(dropped)
             - 2.0 * float(failure)
+            + action_penalty
+            + unsafe_close_penalty
         )
 
         info["reward_reach"] = 2.0 * reach_progress
+        info["reward_closeness"] = closeness_reward
         info["reward_lift"] = 20.0 * lift_progress
         info["reward_grasp"] = float(newly_grasped)
         info["reward_success"] = 10.0 * float(success)
         info["reward_drop"] = -1.0 * float(dropped)
         info["reward_failure"] = -2.0 * float(failure)
+        info["reward_action"] = action_penalty
+        info["reward_unsafe_close"] = unsafe_close_penalty
+        info["gripper_close_blocked"] = unsafe_close
         info["reward_total"] = shaped_reward
 
         self._previous_distance = current_distance
